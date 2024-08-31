@@ -6,9 +6,7 @@ import re
 import math
 from discord.ext import commands
 
-
-url_rx = re.compile("https?:\\/\\/(?:www\\.)?.+")  # noqa: W605
-
+url_rx = re.compile(r"https?:\/\/(?:www\.)?.+")
 
 class MusicPlugin(commands.Cog):
     def __init__(self, bot):
@@ -17,13 +15,12 @@ class MusicPlugin(commands.Cog):
         self.lavalink = {"host": "", "password": "", "port": 2333}
         asyncio.create_task(self.update())
 
-    def update(self):
+    async def update(self):
         self.lavalink["host"] = os.getenv("ll_host")
-        self.lavalink["port"] = os.getenv("ll_port")
+        self.lavalink["port"] = int(os.getenv("ll_port", 2333))
         self.lavalink["password"] = os.getenv("ll_password")
-        if not hasattr(
-            self.bot, "lavalink"
-        ):  # This ensures the client isn't overwritten during cog reloads.
+        
+        if not hasattr(self.bot, "lavalink"):
             self.bot.lavalink = lavalink.Client(self.bot.user.id)
             self.bot.lavalink.add_node(
                 self.lavalink["host"],
@@ -31,21 +28,32 @@ class MusicPlugin(commands.Cog):
                 self.lavalink["password"],
                 os.getenv("ll_region", "eu"),
                 "default-node",
-            )  # Host, Port, Password, Region, Name
+            )
             self.bot.add_listener(
                 self.bot.lavalink.voice_update_handler, "on_socket_response"
             )
 
     @commands.command()
-    async def join(self, ctx: commands.Context, channel: str):
-        ws = self.bot._connection._get_websocket(ctx.guild.id)
-        await ws.voice_state(str(ctx.guild.id), channel)
-        await ctx.send("Done!")
+    async def join(self, ctx: commands.Context):
+        """ Joins the voice channel of the user. """
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            return await ctx.send("You need to be in a voice channel.")
+
+        channel = ctx.author.voice.channel
+        player = self.bot.lavalink.players.get(ctx.guild.id)
+
+        if not player.is_connected:
+            player.store("channel", ctx.channel.id)
+            await player.connect(channel.id)
+            await ctx.send("Joined the voice channel!")
 
     @commands.command(aliases=["p"])
     async def play(self, ctx, *, query: str):
         """ Searches and plays a song from a given query. """
         player = self.bot.lavalink.players.get(ctx.guild.id)
+
+        if not player:
+            player = self.bot.lavalink.players.create(ctx.guild.id, endpoint=str(ctx.guild.region))
 
         query = query.strip("<>")
 
@@ -61,14 +69,10 @@ class MusicPlugin(commands.Cog):
 
         if results["loadType"] == "PLAYLIST_LOADED":
             tracks = results["tracks"]
-
             for track in tracks:
                 player.add(requester=ctx.author.id, track=track)
-
             embed.title = "Playlist Enqueued!"
-            embed.description = (
-                f'{results["playlistInfo"]["name"]} - {len(tracks)} tracks'
-            )
+            embed.description = f'{results["playlistInfo"]["name"]} - {len(tracks)} tracks'
         else:
             track = results["tracks"][0]
             embed.title = "Track Enqueued"
@@ -81,9 +85,12 @@ class MusicPlugin(commands.Cog):
             await player.play()
 
     @commands.command()
-    async def seek(self, ctx, *, seconds: int):
+    async def seek(self, ctx, seconds: int):
         """ Seeks to a given position in a track. """
         player = self.bot.lavalink.players.get(ctx.guild.id)
+
+        if not player.is_playing:
+            return await ctx.send("Not playing.")
 
         track_time = player.position + (seconds * 1000)
         await player.seek(track_time)
@@ -122,10 +129,7 @@ class MusicPlugin(commands.Cog):
             return await ctx.send("Nothing playing.")
 
         position = lavalink.utils.format_time(player.position)
-        if player.current.stream:
-            duration = "🔴 LIVE"
-        else:
-            duration = lavalink.utils.format_time(player.current.duration)
+        duration = "🔴 LIVE" if player.current.stream else lavalink.utils.format_time(player.current.duration)
         song = f"**[{player.current.title}]({player.current.uri})**\n({position}/{duration})"
 
         embed = discord.Embed(
@@ -152,13 +156,13 @@ class MusicPlugin(commands.Cog):
             queue_list += f"`{index + 1}.` [**{track.title}**]({track.uri})\n"
 
         embed = discord.Embed(
-            colour=discord.Color.blurple(),
+            color=discord.Color.blurple(),
             description=f"**{len(player.queue)} tracks**\n\n{queue_list}",
         )
         embed.set_footer(text=f"Viewing page {page}/{pages}")
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=["resume"])
+    @commands.command()
     async def pause(self, ctx):
         """ Pauses/Resumes the current track. """
         player = self.bot.lavalink.players.get(ctx.guild.id)
@@ -178,13 +182,14 @@ class MusicPlugin(commands.Cog):
         """ Changes the player's volume (0-1000). """
         player = self.bot.lavalink.players.get(ctx.guild.id)
 
-        if not volume:
+        if volume is None:
             return await ctx.send(f"🔈 | {player.volume}%")
 
-        await player.set_volume(
-            volume
-        )  # Lavalink will automatically cap values between, or equal to 0-1000.
-        await ctx.send(f"🔈 | Set to {player.volume}%")
+        if volume < 0 or volume > 1000:
+            return await ctx.send("Volume must be between 0 and 1000.")
+
+        await player.set_volume(volume)
+        await ctx.send(f"🔈 | Set to {volume}%")
 
     @commands.command()
     async def shuffle(self, ctx):
@@ -215,10 +220,8 @@ class MusicPlugin(commands.Cog):
         if not player.queue:
             return await ctx.send("Nothing queued.")
 
-        if index > len(player.queue) or index < 1:
-            return await ctx.send(
-                f"Index has to be **between** 1 and {len(player.queue)}"
-            )
+        if index < 1 or index > len(player.queue):
+            return await ctx.send(f"Index has to be between 1 and {len(player.queue)}")
 
         removed = player.queue.pop(index - 1)  # Account for 0-index.
 
@@ -264,22 +267,17 @@ class MusicPlugin(commands.Cog):
 
         player.queue.clear()
         await player.stop()
-        await self.join(ctx.guild.id, None)
+        await player.disconnect()
         await ctx.send("*⃣ | Disconnected.")
 
     async def ensure_voice(self, ctx):
-        """ This check ensures that the bot and command author are in the same voicechannel. """
-        player = self.bot.lavalink.players.create(
-            ctx.guild.id, endpoint=str(ctx.guild.region)
-        )
-        # Create returns a player if one exists, otherwise creates.
+        """ This check ensures that the bot and command author are in the same voice channel. """
+        player = self.bot.lavalink.players.get(ctx.guild.id) or self.bot.lavalink.players.create(ctx.guild.id, endpoint=str(ctx.guild.region))
 
-        should_connect = ctx.command.name in (
-            "play"
-        )  # Add commands that require joining voice to work.
+        should_connect = ctx.command.name in ("play", "join")  # Commands that require joining voice
 
         if not ctx.author.voice or not ctx.author.voice.channel:
-            raise commands.CommandInvokeError("Join a voicechannel first.")
+            raise commands.CommandInvokeError("You need to be in a voice channel.")
 
         if not player.is_connected:
             if not should_connect:
@@ -287,19 +285,13 @@ class MusicPlugin(commands.Cog):
 
             permissions = ctx.author.voice.channel.permissions_for(ctx.me)
 
-            if (
-                not permissions.connect or not permissions.speak
-            ):  # Check user limit too?
-                raise commands.CommandInvokeError(
-                    "I need the `CONNECT` and `SPEAK` permissions."
-                )
+            if not permissions.connect or not permissions.speak:
+                raise commands.CommandInvokeError("I need the `CONNECT` and `SPEAK` permissions.")
 
-            player.store("channel", ctx.channel.id)
-            await self.join(ctx=ctx, channel=str(ctx.author.voice.channel.id))
+            await player.connect(ctx.author.voice.channel.id)
         else:
             if int(player.channel_id) != ctx.author.voice.channel.id:
-                raise commands.CommandInvokeError("You need to be in my voicechannel.")
+                raise commands.CommandInvokeError("You need to be in my voice channel.")
 
-
-def setup(bot):
+async def setup(bot):
     bot.add_cog(MusicPlugin(bot))
