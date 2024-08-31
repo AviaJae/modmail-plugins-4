@@ -39,7 +39,6 @@ class BirthdayPlugin(commands.Cog):
             await self.db.find_one_and_update(
                 {"_id": "birthdays"}, {"$set": {"birthdays": dict()}}, upsert=True
             )
-
             birthdays = await self.db.find_one({"_id": "birthdays"})
 
         if config is None:
@@ -56,7 +55,6 @@ class BirthdayPlugin(commands.Cog):
                 },
                 upsert=True,
             )
-
             config = await self.db.find_one({"_id": "config"})
 
         self.birthdays = birthdays.get("birthdays", dict())
@@ -92,20 +90,20 @@ class BirthdayPlugin(commands.Cog):
             if not self.enabled:
                 return
 
+            custom_timezone = timezone(self.timezone)
+            now = datetime.datetime.now(custom_timezone)
+
             if self.booted:
-                custom_timezone = timezone(self.timezone)
-                now = datetime.datetime.now(custom_timezone)
                 sleep_time = (
                     now.replace(hour=0, minute=15, second=0, microsecond=0) - now
-                ).seconds
+                ).total_seconds()
                 self.booted = False
                 await asyncio.sleep(sleep_time)
                 continue
 
             today = now.strftime("%d/%m/%Y").split("/")
-
             for user, obj in self.birthdays.items():
-                if obj["month"] != today[1] or obj["day"] != today[0]:
+                if str(obj["month"]) != today[1] or str(obj["day"]) != today[0]:
                     continue
                 guild = self.bot.get_guild(int(obj["guild"]))
                 if guild is None:
@@ -123,20 +121,18 @@ class BirthdayPlugin(commands.Cog):
                     channel = guild.get_channel(int(self.channels[obj["guild"]]))
                     if channel is None:
                         continue
-                    age = today[2] - obj["year"]
+                    age = int(today[2]) - obj["year"]
                     await channel.send(
                         self.messages[obj["guild"]]
                         .replace("{user.mention}", member.mention)
                         .replace("{user}", str(member))
-                        .replcae("{age}", age)
+                        .replace("{age}", str(age))
                     )
-                    continue
 
-            custom_timezone = timezone(self.timezone)
+            # Calculate time until next midnight
             now = datetime.datetime.now(custom_timezone)
-            sleep_time = (
-                now.replace(hour=0, minute=0, second=0, microsecond=0) - now
-            ).seconds
+            next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+            sleep_time = (next_midnight - now).total_seconds()
             await asyncio.sleep(sleep_time)
 
     @commands.group(invoke_without_command=True)
@@ -144,9 +140,7 @@ class BirthdayPlugin(commands.Cog):
         """
         Birthday stuff.
         """
-
         await ctx.send_help(ctx.command)
-        return
 
     @birthday.command()
     async def set(self, ctx: commands.Context, date: str):
@@ -159,43 +153,37 @@ class BirthdayPlugin(commands.Cog):
         **Example:**
         {p}birthday set 26/12/2002
         """
-
         try:
             birthday = date.split("/")
-            if int(birthday[1]) > 13:
+            if int(birthday[1]) > 12:  # Fix: Month should not be greater than 12
                 await ctx.send(":x: | Invalid month provided.")
                 return
-            birthday_obj = {}
-            birthday_obj["day"] = int(birthday[0])
-            birthday_obj["month"] = int(birthday[1])
-            birthday_obj["year"] = int(birthday[2])
-            birthday_obj["guild"] = str(ctx.guild.id)
+
+            birthday_obj = {
+                "day": int(birthday[0]),
+                "month": int(birthday[1]),
+                "year": int(birthday[2]),
+                "guild": str(ctx.guild.id),
+            }
 
             self.birthdays[str(ctx.author.id)] = birthday_obj
             await self._update_birthdays()
-            await ctx.send(f"Done! You'r birthday was set to {date}")
-            return
-        except KeyError:
-            logger.info(birthday[0])
-            logger.info(birthday[1])
-            logger.info(birthday[2])
-
+            await ctx.send(f"Done! Your birthday was set to {date}")
+        except (KeyError, ValueError) as e:
+            logger.error(f"Error setting birthday: {e}")
             await ctx.send("Please check the format of the date")
-            return
         except Exception as e:
+            logger.error(f"Unexpected error: {e}")
             await ctx.send(f":x: | An error occurred\n```{e}```")
-            return
 
     @birthday.command()
     async def clear(self, ctx: commands.Context):
         """
         Clear your birthday from the database.
         """
-
-        self.birthdays.pop(str(ctx.author.id))
+        self.birthdays.pop(str(ctx.author.id), None)  # Handle case if key doesn't exist
         await self._update_birthdays()
-        await ctx.send(f"Done!")
-        return
+        await ctx.send("Done!")
 
     @birthday.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
@@ -203,23 +191,19 @@ class BirthdayPlugin(commands.Cog):
         """
         Configure a channel for sending birthday announcements
         """
-
         self.channels[str(ctx.guild.id)] = str(channel.id)
         await self._update_config()
         await ctx.send("Done!")
-        return
 
     @birthday.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
     async def role(self, ctx: commands.Context, role: discord.Role):
         """
-        Configure a role which will be added to the birthay boizzzz
+        Configure a role which will be added to the birthday boizzzz
         """
-
         self.roles[str(ctx.guild.id)] = str(role.id)
         await self._update_config()
         await ctx.send("Done!")
-        return
 
     @birthday.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
@@ -228,15 +212,13 @@ class BirthdayPlugin(commands.Cog):
         Set a message to announce when wishing someone's birthday
 
         **Formatting:**
-        • {user} - Name of he birthday boi
+        • {user} - Name of the birthday boi
         • {user.mention} - Mention the birthday boi
         • {age} - Age of the birthday boiiii
         """
-
         self.messages[str(ctx.guild.id)] = msg
         await self._update_config()
         await ctx.send("Done!")
-        return
 
     @birthday.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
@@ -244,11 +226,9 @@ class BirthdayPlugin(commands.Cog):
         """
         Enable / Disable this plugin
         """
-
         self.enabled = not self.enabled
         await self._update_config()
         await ctx.send(f"{'Enabled' if self.enabled else 'Disabled'} the plugin :p")
-        return
 
     @birthday.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
@@ -256,24 +236,20 @@ class BirthdayPlugin(commands.Cog):
         """
         Set a timezone
         """
-
         if timezone not in pytz.all_timezones:
             matches = get_close_matches(timezone, pytz.all_timezones)
-            if len(matches) > 0:
-                embed = discord.Embed()
-                embed.color = 0xEB3446
+            if matches:
+                embed = discord.Embed(color=0xEB3446)
                 embed.description = f"Did you mean: \n`{'`, `'.join(matches)}`"
                 await ctx.send(embed=embed)
-                return
             else:
                 await ctx.send("Couldn't find the timezone.")
-                return
+            return
 
         self.timezone = timezone
         await self._update_config()
-        await ctx.send("Done")
-        return
+        await ctx.send("Done!")
 
 
-def setup(bot):
-    bot.add_cog(BirthdayPlugin(bot))
+async def setup(bot):
+    await bot.add_cog(BirthdayPlugin(bot))
