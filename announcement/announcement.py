@@ -329,5 +329,5 @@ class AnnouncementPlugin(commands.Cog):
         return embed
 
 
-def setup(bot):
+async def setup(bot):
     await bot.add_cog(AnnouncementPlugin(bot))
