@@ -1,8 +1,6 @@
 import datetime
 import logging
 
-logger = logging.getLogger("Modmail")
-
 import discord
 import typing
 from discord.ext import commands
@@ -10,6 +8,7 @@ from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
 
+logger = logging.getLogger("Modmail")
 
 class ModerationPlugin(commands.Cog):
     """
@@ -19,6 +18,7 @@ class ModerationPlugin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.plugin_db.get_partition(self)
+        logger.debug("ModerationPlugin initialized")
 
     @commands.group(invoke_without_command=True)
     @commands.guild_only()
@@ -35,15 +35,11 @@ class ModerationPlugin(commands.Cog):
         """
         Set the log channel for moderation actions.
         """
-        if not channel.permissions_for(ctx.guild.me).send_messages:
-            return await ctx.send("I don't have permission to send messages in that channel.")
-
         await self.db.find_one_and_update(
             {"_id": "config"}, {"$set": {"channel": channel.id}}, upsert=True
         )
+        await ctx.send("Log channel updated successfully!")
 
-        await ctx.send("Log channel updated!")
-        
     @commands.command(aliases=["banhammer"])
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def ban(
@@ -59,22 +55,21 @@ class ModerationPlugin(commands.Cog):
         {prefix}ban @member 10 Advertising their own products
         {prefix}ban @member1 @member2 @member3 Spamming
         """
-
         config = await self.db.find_one({"_id": "config"})
 
-        if config is None or "channel" not in config:
+        if not config:
             return await ctx.send("There's no configured log channel.")
+        
+        channel = ctx.guild.get_channel(int(config["channel"]))
 
-        channel = ctx.guild.get_channel(config["channel"])
+        if not channel:
+            return await ctx.send("Configured log channel is invalid.")
 
-        if channel is None:
-            return await ctx.send("Configured log channel not found.")
-        if not channel.permissions_for(ctx.guild.me).send_messages:
-            return await ctx.send("I don't have permission to send messages in the log channel.")
-
-        try:
-            for member in members:
-                await member.ban(delete_message_days=days, reason=reason or "No reason provided.")
+        for member in members:
+            try:
+                await member.ban(
+                    delete_message_days=days, reason=reason
+                )
 
                 embed = discord.Embed(
                     color=discord.Color.red(),
@@ -89,11 +84,11 @@ class ModerationPlugin(commands.Cog):
                 await ctx.send(f"🚫 | {member} has been banned!")
                 await channel.send(embed=embed)
 
-        except discord.Forbidden:
-            await ctx.send("I don't have permission to ban members.")
-        except Exception as e:
-            await ctx.send("An unexpected error occurred. Please check the logs.")
-            logger.error(e)
+            except discord.Forbidden:
+                await ctx.send("I don't have permission to ban members.")
+            except Exception as e:
+                logger.error(f"Error banning user: {e}")
+                await ctx.send("An error occurred while banning the user.")
 
     @commands.command(aliases=["getout"])
     @checks.has_permissions(PermissionLevel.MODERATOR)
@@ -105,22 +100,20 @@ class ModerationPlugin(commands.Cog):
         {prefix}kick @member Being rude
         {prefix}kick @member1 @member2 @member3 Advertising
         """
-
         config = await self.db.find_one({"_id": "config"})
 
-        if config is None or "channel" not in config:
+        if not config:
             return await ctx.send("There's no configured log channel.")
+        
+        channel = ctx.guild.get_channel(int(config["channel"]))
 
-        channel = ctx.guild.get_channel(config["channel"])
+        if not channel:
+            return await ctx.send("Configured log channel is invalid.")
 
-        if channel is None:
-            return await ctx.send("Configured log channel not found.")
-        if not channel.permissions_for(ctx.guild.me).send_messages:
-            return await ctx.send("I don't have permission to send messages in the log channel.")
-
-        try:
-            for member in members:
-                await member.kick(reason=reason or "No reason provided.")
+        for member in members:
+            try:
+                await member.kick(reason=reason)
+                
                 embed = discord.Embed(
                     color=discord.Color.red(),
                     title=f"{member} was kicked!",
@@ -134,11 +127,11 @@ class ModerationPlugin(commands.Cog):
                 await ctx.send(f"🦶 | {member} has been kicked!")
                 await channel.send(embed=embed)
 
-        except discord.Forbidden:
-            await ctx.send("I don't have permission to kick members.")
-        except Exception as e:
-            await ctx.send("An unexpected error occurred. Please check the logs.")
-            logger.error(e)
+            except discord.Forbidden:
+                await ctx.send("I don't have permission to kick members.")
+            except Exception as e:
+                logger.error(f"Error kicking user: {e}")
+                await ctx.send("An error occurred while kicking the user.")
 
     @commands.command()
     @checks.has_permissions(PermissionLevel.MODERATOR)
@@ -147,66 +140,60 @@ class ModerationPlugin(commands.Cog):
         Usage:
         {prefix}warn @member Spoilers
         """
-
         if member.bot:
             return await ctx.send("Bots cannot be warned.")
 
         channel_config = await self.db.find_one({"_id": "config"})
 
-        if channel_config is None or "channel" not in channel_config:
+        if not channel_config:
             return await ctx.send("There's no configured log channel.")
+        
+        channel = ctx.guild.get_channel(int(channel_config["channel"]))
 
-        channel = ctx.guild.get_channel(channel_config["channel"])
+        if not channel:
+            return await ctx.send("Configured log channel is invalid.")
 
-        if channel is None:
-            return await ctx.send("Configured log channel not found.")
-        if not channel.permissions_for(ctx.guild.me).send_messages:
-            return await ctx.send("I don't have permission to send messages in the log channel.")
+        warns_config = await self.db.find_one({"_id": "warns"}) or {}
 
-        config = await self.db.find_one({"_id": "warns"}) or await self.db.insert_one({"_id": "warns"})
-        userwarns = config.get(str(member.id), [])
-
-        userwarns.append({"reason": reason, "mod": ctx.author.id})
+        user_warns = warns_config.get(str(member.id), [])
+        user_warns.append({"reason": reason, "mod": ctx.author.id})
 
         await self.db.find_one_and_update(
-            {"_id": "warns"}, {"$set": {str(member.id): userwarns}}, upsert=True
+            {"_id": "warns"}, {"$set": {str(member.id): user_warns}}, upsert=True
         )
 
         await ctx.send(f"Successfully warned **{member}**\n`{reason}`")
 
         await channel.send(
             embed=await self.generate_warn_embed(
-                str(member.id), str(ctx.author.id), len(userwarns), reason
+                str(member.id), str(ctx.author.id), len(user_warns), reason
             )
         )
 
     @commands.command()
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def pardon(self, ctx, member: discord.Member, *, reason: str):
-        """Remove all warnings from a member.
+        """Remove all warnings of a member.
         Usage:
         {prefix}pardon @member Nice guy
         """
-
         if member.bot:
             return await ctx.send("Bots cannot be pardoned.")
 
         channel_config = await self.db.find_one({"_id": "config"})
 
-        if channel_config is None or "channel" not in channel_config:
+        if not channel_config:
             return await ctx.send("There's no configured log channel.")
+        
+        channel = ctx.guild.get_channel(int(channel_config["channel"]))
 
-        channel = ctx.guild.get_channel(channel_config["channel"])
+        if not channel:
+            return await ctx.send("Configured log channel is invalid.")
 
-        if channel is None:
-            return await ctx.send("Configured log channel not found.")
-        if not channel.permissions_for(ctx.guild.me).send_messages:
-            return await ctx.send("I don't have permission to send messages in the log channel.")
+        warns_config = await self.db.find_one({"_id": "warns"}) or {}
 
-        config = await self.db.find_one({"_id": "warns"})
-
-        if config is None or str(member.id) not in config:
-            return await ctx.send(f"{member} has no warnings.")
+        if str(member.id) not in warns_config:
+            return await ctx.send(f"{member} doesn't have any warnings.")
 
         await self.db.find_one_and_update(
             {"_id": "warns"}, {"$set": {str(member.id): []}}
@@ -215,8 +202,10 @@ class ModerationPlugin(commands.Cog):
         await ctx.send(f"Successfully pardoned **{member}**\n`{reason}`")
 
         embed = discord.Embed(color=discord.Color.blue())
-
-        embed.set_author(name=f"Pardon | {member}", icon_url=member.avatar_url)
+        embed.set_author(
+            name=f"Pardon | {member}",
+            icon_url=member.avatar_url,
+        )
         embed.add_field(name="User", value=f"{member}")
         embed.add_field(name="Moderator", value=f"<@{ctx.author.id}> - `{ctx.author}`")
         embed.add_field(name="Reason", value=reason)
@@ -224,19 +213,22 @@ class ModerationPlugin(commands.Cog):
 
         await channel.send(embed=embed)
 
-    async def generate_warn_embed(self, memberid: str, modid: str, warning_count: int, reason: str):
-        member: discord.User = await self.bot.fetch_user(int(memberid))
-        mod: discord.User = await self.bot.fetch_user(int(modid))
+    async def generate_warn_embed(self, member_id, mod_id, warning_count, reason):
+        member = await self.bot.fetch_user(int(member_id))
+        mod = await self.bot.fetch_user(int(mod_id))
 
         embed = discord.Embed(color=discord.Color.red())
-
-        embed.set_author(name=f"Warn | {member}", icon_url=member.avatar_url)
+        embed.set_author(
+            name=f"Warn | {member}",
+            icon_url=member.avatar_url,
+        )
         embed.add_field(name="User", value=f"{member}")
-        embed.add_field(name="Moderator", value=f"<@{modid}> - ({mod})")
+        embed.add_field(name="Moderator", value=f"<@{mod_id}> - ({mod})")
         embed.add_field(name="Reason", value=reason)
-        embed.add_field(name="Total Warnings", value=warning_count)
+        embed.add_field(name="Total Warnings", value=str(warning_count))
+
         return embed
 
-
-async def setup(bot):
+def setup(bot):
     bot.add_cog(ModerationPlugin(bot))
+    logger.debug("ModerationPlugin setup complete")
