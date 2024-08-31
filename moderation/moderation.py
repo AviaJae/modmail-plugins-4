@@ -229,6 +229,6 @@ class ModerationPlugin(commands.Cog):
 
         return embed
 
-def setup(bot):
+async def setup(bot):
     bot.add_cog(ModerationPlugin(bot))
     logger.debug("ModerationPlugin setup complete")
