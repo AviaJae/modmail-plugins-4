@@ -9,7 +9,7 @@ from core.models import PermissionLevel
 
 class ReportUser(commands.Cog):
     """
-    Report a user to staff
+    Report a user to the AirAsia Moderation Team.
     """
 
     def __init__(self, bot):
@@ -17,7 +17,7 @@ class ReportUser(commands.Cog):
         self.db = bot.plugin_db.get_partition(self)
         self.blacklist = []
         self.channel = None
-        self.message = "Thanks for reporting, our Staff will look into it soon."
+        self.message = "Thanks for reporting, the AirAsia Moderation Team will look into it soon."
         self.current_case = 1
         asyncio.create_task(self._set_config())
 
@@ -25,13 +25,12 @@ class ReportUser(commands.Cog):
         config = await self.db.find_one({"_id": "config"})
         if config is None:
             return
-        else:
-            self.blacklist = config.get("blacklist", [])
-            self.channel = config.get("channel", None)
-            self.current_case = config.get("case", 1)
-            self.message = config.get(
-                "message", "Thanks for reporting, our Staff will look into it soon."
-            )
+        self.blacklist = config.get("blacklist", [])
+        self.channel = config.get("channel", None)
+        self.current_case = config.get("case", 1)
+        self.message = config.get(
+            "message", "Thanks for reporting, the AirAsia Moderation Team will look into it soon."
+        )
 
     async def update(self):
         await self.db.find_one_and_update(
@@ -39,7 +38,7 @@ class ReportUser(commands.Cog):
             {
                 "$set": {
                     "blacklist": self.blacklist,
-                    "chanel": self.channel,
+                    "channel": self.channel,
                     "message": self.message,
                     "case": self.current_case,
                 }
@@ -47,57 +46,51 @@ class ReportUser(commands.Cog):
             upsert=True,
         )
 
-    @commands.group()
+    @commands.group(invoke_without_command=True)
     async def ru(self, ctx: commands.Context):
         """
         Report User Staff Commands
         """
-        return
+        await ctx.send_help(ctx.command)
 
     @ru.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
     async def blacklist(self, ctx, member: discord.Member):
         """
-        Blacklist or blacklist a user
+        Blacklist or unblacklist a user
         """
         if member.id not in self.blacklist:
             self.blacklist.append(member.id)
-            updated = False
+            action = "Blacklisted"
         else:
-            self.blacklist.pop(member.id)
-            updated = True
+            self.blacklist.remove(member.id)
+            action = "Blacklist Removed"
         await self.update()
 
-        await ctx.send(f"{'Un' if updated else ''}Blacklisted!")
+        await ctx.send(f"{action}!")
 
     @ru.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
     async def channel(self, ctx: commands.Context, channel: discord.TextChannel):
         """
-        Set A reports Channel
+        Set a reports channel
         """
-        await self.db.find_one_and_update(
-            {"_id": "config"}, {"$set": {"channel": str(channel.id)}}, upsert=True
-        )
         self.channel = str(channel.id)
-        await ctx.send("Done!")
+        await self.update()
+        await ctx.send("Channel for reports is set.")
 
     @ru.command()
     @checks.has_permissions(PermissionLevel.ADMIN)
     async def message(self, ctx, *, msg: str):
         """
-        Customise the message that will be sent to user
+        Customize the message that will be sent to users who report someone.
         """
-        await self.db.find_one_and_update(
-            {"_id": "config"}, {"$set": {"message": msg}}, upsert=True
-        )
         self.message = msg
-        await ctx.send("Done!")
+        await self.update()
+        await ctx.send("Custom message set!")
 
     @commands.command()
-    async def report(
-        self, ctx: commands.Context, member: discord.Member, *, reason: str
-    ):
+    async def report(self, ctx: commands.Context, member: discord.Member, *, reason: str):
         """
         Report a user
         """
@@ -107,29 +100,35 @@ class ReportUser(commands.Cog):
 
         if self.channel is None:
             await ctx.message.delete()
-            await ctx.author.send("Reports Channel for the guild has not been set.")
+            await ctx.author.send("Reports channel for the guild has not been set.")
             return
-        else:
-            channel: discord.TextChannel = self.bot.get_channel(int(self.channel))
-            embed = discord.Embed(
-                color=discord.Colour.red(), timestamp=datetime.utcnow()
-            )
-            embed.set_author(
-                name=f"{ctx.author.name}#{ctx.author.discriminator}",
-                icon_url=ctx.author.avatar_url,
-            )
-            embed.title = "User Report"
-            embed.add_field(
-                name="Against",
-                value=f"{member.name}#{member.discriminator}",
-                inline=False,
-            )
-            embed.add_field(name="Reason", value=reason, inline=False)
-            embed.set_footer(text=f"Case {self.current_case}")
+
+        channel: discord.TextChannel = self.bot.get_channel(int(self.channel))
+        if not channel:
+            await ctx.message.delete()
+            await ctx.author.send("The reports channel is invalid.")
+            return
+
+        embed = discord.Embed(
+            color=discord.Colour.red(), timestamp=datetime.utcnow()
+        )
+        embed.set_author(
+            name=f"{ctx.author.name}#{ctx.author.discriminator}",
+            icon_url=ctx.author.avatar.url,
+        )
+        embed.title = "User Report"
+        embed.add_field(
+            name="Against",
+            value=f"{member.name}#{member.discriminator}",
+            inline=False,
+        )
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.set_footer(text=f"Case {self.current_case}")
+
+        try:
             m: discord.Message = await channel.send(embed=embed)
             await ctx.author.send(self.message)
-            await ctx.message.delete()
-            await m.add_reaction("\U00002705")
+            await m.add_reaction("✅")
             await self.db.insert_one(
                 {
                     "case": self.current_case,
@@ -139,80 +138,81 @@ class ReportUser(commands.Cog):
                     "resolved": False,
                 }
             )
-            self.current_case = self.current_case + 1
+            self.current_case += 1
             await self.update()
-            return
+        except Exception as e:
+            await ctx.author.send(f"An error occurred while reporting: {e}")
+
+        await ctx.message.delete()
 
     @ru.command()
     @checks.has_permissions(PermissionLevel.MOD)
     async def info(self, ctx: commands.Context, casen: int):
+        """
+        Get information about a specific case
+        """
         case = await self.db.find_one({"case": casen})
 
         if case is None:
-            await ctx.send(f"Case `#{casen}` dose'nt exist")
+            await ctx.send(f"Case `#{casen}` doesn't exist.")
             return
-        else:
-            user1: discord.User = await self.bot.fetch_user(int(case["author"]))
-            user2: discord.User = await self.bot.fetch_user(int(case["against"]))
-            embed = discord.Embed(color=discord.Colour.red())
-            embed.add_field(
-                name="By", value=f"{user1.name}#{user1.discriminator}", inline=False
-            )
-            embed.add_field(
-                name="Against",
-                value=f"{user2.name}#{user2.discriminator}",
-                inline=False,
-            )
-            embed.add_field(name="Reason", value=case["reason"], inline=False)
-            embed.add_field(name="Resolved", value=case["resolved"], inline=False)
-            embed.title = "Report Log"
-            await ctx.send(embed=embed)
+
+        user1: discord.User = await self.bot.fetch_user(int(case["author"]))
+        user2: discord.User = await self.bot.fetch_user(int(case["against"]))
+
+        embed = discord.Embed(color=discord.Colour.red())
+        embed.add_field(
+            name="Reported by", value=f"{user1.name}#{user1.discriminator}", inline=False
+        )
+        embed.add_field(
+            name="Against", value=f"{user2.name}#{user2.discriminator}", inline=False
+        )
+        embed.add_field(name="Reason", value=case["reason"], inline=False)
+        embed.add_field(name="Status", value=case["resolved"], inline=False)
+        embed.title = "Report Log"
+
+        await ctx.send(embed=embed)
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         if payload.user_id == self.bot.user.id:
             return
 
-        if (
-            str(payload.channel_id) != str(self.channel)
-            or str(payload.emoji.name) != "✅"
-        ):
+        if str(payload.channel_id) != str(self.channel) or str(payload.emoji.name) != "✅":
             return
 
         channel: discord.TextChannel = self.bot.get_channel(payload.channel_id)
         msg: discord.Message = await channel.fetch_message(payload.message_id)
 
-        if not msg.embeds or msg.embeds[0] is None:
+        if not msg.embeds or not msg.embeds[0].footer.text:
             return
 
-        if msg.embeds[0].footer.text is None:
+        case_number_str = msg.embeds[0].footer.text.replace("Case ", "")
+        if not case_number_str.isdigit():
             return
 
-        case = int(msg.embeds[0].footer.text[5:])
+        case_number = int(case_number_str)
+        case = await self.db.find_one({"case": case_number})
 
-        casedb = await self.db.find_one({"case": case})
-
-        if casedb is None:
+        if case is None or case.get("resolved", False):
+            await channel.send(f"Case `#{case_number}` is already resolved.")
             return
 
-        if casedb["resolved"] is True:
-            await channel.send(f"Case `#{case}`Already resolved.")
-            return
-
-        def check(messge: discord.Message):
+        def check(message: discord.Message):
             return (
-                payload.user_id == messge.author.id
-                and payload.channel_id == messge.channel.id
+                payload.user_id == message.author.id
+                and payload.channel_id == message.channel.id
             )
 
-        await channel.send("Enter Your Report which will be sent to the reporter")
-        reportr = await self.bot.wait_for("message", check=check)
-        user1 = self.bot.get_user(int(casedb["author"]))
-        await user1.send(f"**Reply From Staff Team:**\n{reportr.content}")
-        await channel.send("DM'd")
-        await self.db.find_one_and_update({"case": case}, {"$set": {"resolved": True}})
-        return
+        await channel.send("Enter your response which will be sent to the reporter:")
+        report_response = await self.bot.wait_for("message", check=check)
+        user1 = await self.bot.fetch_user(int(case["author"]))
+        await user1.send(f"**Response from AirAsia Moderation Team:**\n{report_response.content}")
+        await channel.send("DM sent.")
+        await self.db.find_one_and_update(
+            {"case": case_number}, {"$set": {"resolved": True}}
+        )
 
 
-def setup(bot):
-    bot.add_cog(ReportUser(bot))
+async def setup(bot):
+    await bot.add_cog(ReportUser(bot))
