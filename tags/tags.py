@@ -150,5 +150,5 @@ class TagsPlugin(commands.Cog):
         return await self.db.find_one({"name": name})
 
 
-def setup(bot: commands.Bot):
-    bot.add_cog(TagsPlugin(bot))
+async def setup(bot: commands.Bot):
+    await bot.add_cog(TagsPlugin(bot))
