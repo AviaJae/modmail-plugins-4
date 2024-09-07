@@ -12,7 +12,7 @@ class TagsPlugin(commands.Cog):
 
     @commands.group(invoke_without_command=True)
     @commands.guild_only()
-    @checks.has_permissions(PermissionLevel.ADMIN)
+    @checks.has_permissions(PermissionLevel.REGULAR)
     async def tags(self, ctx: commands.Context):
         """
         Create, Edit, & Manage Tags
@@ -75,25 +75,6 @@ class TagsPlugin(commands.Cog):
                 await ctx.send(f"✅ | Tag `{name}` has been successfully deleted.")
             else:
                 await ctx.send("❌ | You do not have permission to delete this tag.")
-
-    @tags.command()
-    async def claim(self, ctx: commands.Context, name: str):
-        """
-        Claim ownership of a tag if the original owner has left the server
-        """
-        tag = await self.find_db(name=name)
-        if tag is None:
-            await ctx.send(f"❌ | The tag `{name}` does not exist.")
-        else:
-            member = ctx.guild.get_member(tag["author"])
-            if member:
-                await ctx.send(f"❌ | The owner of this tag, `{member}`, is still in the server.")
-            else:
-                await self.db.find_one_and_update(
-                    {"name": name},
-                    {"$set": {"author": ctx.author.id, "updatedAt": datetime.utcnow()}},
-                )
-                await ctx.send(f"✅ | You have claimed ownership of the tag `{name}`.")
 
     @tags.command()
     async def info(self, ctx: commands.Context, name: str):
