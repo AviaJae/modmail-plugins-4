@@ -12,7 +12,7 @@ class TagsPlugin(commands.Cog):
 
     @commands.group(invoke_without_command=True)
     @commands.guild_only()
-    @checks.has_permissions(PermissionLevel.REGULAR)
+    @checks.has_permissions(PermissionLevel.ADMIN)
     async def tags(self, ctx: commands.Context):
         """
         Create, Edit, & Manage Tags
