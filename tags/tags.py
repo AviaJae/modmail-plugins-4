@@ -1,6 +1,7 @@
 import discord
 from datetime import datetime
 from discord.ext import commands
+prefix = await self.bot.get_prefix(message)
 
 from core import checks
 from core.models import PermissionLevel
@@ -129,7 +130,7 @@ class TagsPlugin(commands.Cog):
         if message.author.bot or not message.content.startswith(self.bot.command_prefix):
             return
 
-        content = message.content[len(?):].split(" ", 1)
+        content = message.content[len(prefix):].split(" ", 1)
         tag = await self.db.find_one({"name": content[0]})
 
         if tag:
