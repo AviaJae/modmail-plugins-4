@@ -8,7 +8,7 @@ from discord.ext import commands
 
 url_rx = re.compile(r"https?:\/\/(?:www\.)?.+")
 
-class MusicPlugin(commands.Cog):
+class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.plugin_db.get_partition(self)
@@ -16,9 +16,9 @@ class MusicPlugin(commands.Cog):
         asyncio.create_task(self.update())
 
     async def update(self):
-        self.lavalink["host"] = os.getenv("ll_host")
-        self.lavalink["port"] = int(os.getenv("ll_port", 2333))
-        self.lavalink["password"] = os.getenv("ll_password")
+        self.lavalink["host"] = os.getenv("lava-all.ajieblogs.eu.org")
+        self.lavalink["port"] = int(os.getenv("ll_port", 433))
+        self.lavalink["password"] = os.getenv("https://dsc.gg/ajidevserver")
         
         if not hasattr(self.bot, "lavalink"):
             self.bot.lavalink = lavalink.Client(self.bot.user.id)
@@ -153,7 +153,7 @@ class MusicPlugin(commands.Cog):
 
         queue_list = ""
         for index, track in enumerate(player.queue[start:end], start=start):
-            queue_list += f"`{index + 1}.` [**{track.title}**]({track.uri})\n"
+            queue_list += f"{index + 1}. [**{track.title}**]({track.uri})\n"
 
         embed = discord.Embed(
             color=discord.Color.blurple(),
@@ -246,7 +246,7 @@ class MusicPlugin(commands.Cog):
         for index, track in enumerate(tracks, start=1):
             track_title = track["info"]["title"]
             track_uri = track["info"]["uri"]
-            o += f"`{index}.` [{track_title}]({track_uri})\n"
+            o += f"{index}. [{track_title}]({track_uri})\n"
 
         embed = discord.Embed(color=discord.Color.blurple(), description=o)
         await ctx.send(embed=embed)
@@ -286,7 +286,7 @@ class MusicPlugin(commands.Cog):
             permissions = ctx.author.voice.channel.permissions_for(ctx.me)
 
             if not permissions.connect or not permissions.speak:
-                raise commands.CommandInvokeError("I need the `CONNECT` and `SPEAK` permissions.")
+                raise commands.CommandInvokeError("I need the CONNECT and SPEAK permissions.")
 
             await player.connect(ctx.author.voice.channel.id)
         else:
@@ -294,4 +294,4 @@ class MusicPlugin(commands.Cog):
                 raise commands.CommandInvokeError("You need to be in my voice channel.")
 
 async def setup(bot):
-    bot.add_cog(MusicPlugin(bot))
+    bot.add_cog(Music(bot))
