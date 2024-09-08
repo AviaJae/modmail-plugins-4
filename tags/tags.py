@@ -129,7 +129,7 @@ class TagsPlugin(commands.Cog):
         if message.author.bot or not message.content.startswith(self.bot.command_prefix):
             return
 
-        content = message.content[len(prefix):].split(" ", 1)
+        content = message.content[len(self.bot.command_prefix):].split(" ", 1)
         tag = await self.db.find_one({"name": content[0]})
 
         if tag:
