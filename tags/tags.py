@@ -1,7 +1,6 @@
 import discord
 from datetime import datetime
 from discord.ext import commands
-prefix = await self.bot.get_prefix(message)
 
 from core import checks
 from core.models import PermissionLevel
