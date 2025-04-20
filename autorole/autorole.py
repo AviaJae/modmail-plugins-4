@@ -5,7 +5,7 @@ from core import checks
 from core.models import PermissionLevel
 
 class AutoRolePlugin(commands.Cog):
-    """Assign 'unverified' role to new members and manage verification."""
+    """Auto assign 'unverified' role on join and remove it if member gets verified."""
 
     def __init__(self, bot):
         self.bot = bot
@@ -14,54 +14,67 @@ class AutoRolePlugin(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         config = await self.db.find_one({"_id": "config"})
-        if not config or "role_id" not in config:
-            return  # Role not set
+        if not config or "unverified_role" not in config or "verified_role" not in config:
+            return
 
-        role = member.guild.get_role(config["role_id"])
-        if role:
+        unverified_role = member.guild.get_role(config["unverified_role"])
+        verified_role = member.guild.get_role(config["verified_role"])
+
+        if not verified_role or not unverified_role:
+            return
+
+        if verified_role not in member.roles and unverified_role not in member.roles:
             try:
-                await member.add_roles(role, reason="Assigned autorole on join")
+                await member.add_roles(unverified_role, reason="Auto-assigned unverified role on join")
             except discord.Forbidden:
                 print(f"Missing permissions to add role to {member}")
             except Exception as e:
-                print(f"Error assigning autorole: {e}")
+                print(f"Error assigning unverified role: {e}")
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.roles == after.roles:
+            return  # no role change
+
+        config = await self.db.find_one({"_id": "config"})
+        if not config or "unverified_role" not in config or "verified_role" not in config:
+            return
+
+        unverified_role = after.guild.get_role(config["unverified_role"])
+        verified_role = after.guild.get_role(config["verified_role"])
+
+        if not verified_role or not unverified_role:
+            return
+
+        # If verified was added, remove unverified
+        if verified_role in after.roles and unverified_role in after.roles:
+            try:
+                await after.remove_roles(unverified_role, reason="Member verified, removed unverified role")
+            except discord.Forbidden:
+                print(f"Missing permissions to remove role from {after}")
+            except Exception as e:
+                print(f"Error removing unverified role: {e}")
 
     @commands.group(invoke_without_command=True)
     @commands.guild_only()
     @checks.has_permissions(PermissionLevel.ADMIN)
     async def autorole(self, ctx):
-        """Configure autorole settings."""
+        """Configure autorole roles."""
         await ctx.send_help(ctx.command)
 
     @autorole.command(name="set")
     @checks.has_permissions(PermissionLevel.ADMIN)
-    async def setrole(self, ctx, role: discord.Role):
-        """Set the role to give to new members (e.g., unverified)."""
+    async def set_roles(self, ctx, unverified: discord.Role, verified: discord.Role):
+        """Set the unverified and verified roles."""
         await self.db.find_one_and_update(
-            {"_id": "config"}, {"$set": {"role_id": role.id}}, upsert=True
+            {"_id": "config"},
+            {"$set": {
+                "unverified_role": unverified.id,
+                "verified_role": verified.id
+            }},
+            upsert=True
         )
-        await ctx.send(f"✅ Autorole set to `{role.name}`.")
-
-    @commands.command()
-    @checks.has_permissions(PermissionLevel.MODERATOR)
-    async def verify(self, ctx, member: discord.Member):
-        """Verify a user by removing the unverified role."""
-        config = await self.db.find_one({"_id": "config"})
-        if not config or "role_id" not in config:
-            return await ctx.send("❌ Autorole not configured.")
-
-        role = member.guild.get_role(config["role_id"])
-        if not role:
-            return await ctx.send("❌ The configured role no longer exists.")
-
-        if role in member.roles:
-            try:
-                await member.remove_roles(role, reason="User verified")
-                await ctx.send(f"✅ {member.mention} has been verified.")
-            except discord.Forbidden:
-                await ctx.send("⚠ I don't have permission to remove that role.")
-        else:
-            await ctx.send(f"{member.mention} doesn't have the unverified role.")
+        await ctx.send(f"✅ Autorole system configured.\nUnverified: `{unverified.name}`\nVerified: `{verified.name}`")
 
 async def setup(bot):
     await bot.add_cog(AutoRolePlugin(bot))
